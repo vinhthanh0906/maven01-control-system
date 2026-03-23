@@ -1,0 +1,3 @@
+gymnasium 
+PyQt6 
+pyside6
