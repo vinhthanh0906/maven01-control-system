@@ -1,3 +1,5 @@
 gymnasium 
 PyQt6 
+PyQt5
 pyside6
+pyqtgraph

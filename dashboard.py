@@ -5,19 +5,17 @@ a status bar with Battery, Speed, Direction.
 """
 
 from collections import deque
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QGridLayout, QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 import pyqtgraph as pg
 
 
 MAX_POINTS = 60   # seconds of history shown
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
 
 def make_chart(title: str, unit: str, color: str, y_range=None) -> tuple:
     """Return (PlotWidget, curve) ready to embed."""
@@ -33,7 +31,7 @@ def make_chart(title: str, unit: str, color: str, y_range=None) -> tuple:
         plot.setYRange(*y_range, padding=0.05)
     plot.setMouseEnabled(x=False, y=False)
     curve = plot.plot(pen=pg.mkPen(color=color, width=2))
-    plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     return plot, curve
 
 
@@ -53,11 +51,11 @@ def status_card(label: str, value: str, unit: str = "", color: str = "#2a82da") 
     layout.setSpacing(2)
 
     lbl = QLabel(label.upper())
-    lbl.setAlignment(Qt.AlignCenter)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     lbl.setStyleSheet("color:#666; font-size:9pt; letter-spacing:1px;")
 
     val = QLabel(f"{value} {unit}")
-    val.setAlignment(Qt.AlignCenter)
+    val.setAlignment(Qt.AlignmentFlag.AlignCenter)
     val.setStyleSheet(f"color:{color}; font-size:18pt; font-weight:600;")
 
     layout.addWidget(lbl)
@@ -65,7 +63,6 @@ def status_card(label: str, value: str, unit: str = "", color: str = "#2a82da") 
     return card, val
 
 
-# ── main widget ───────────────────────────────────────────────────────────────
 
 class DashboardTab(QWidget):
     def __init__(self, parent=None):

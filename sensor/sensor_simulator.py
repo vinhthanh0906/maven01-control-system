@@ -6,7 +6,7 @@ Emits a signal with a dict payload, replacing real MQTT data.
 import random
 import math
 import time
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 
 
 class SensorSimulator(QThread):
