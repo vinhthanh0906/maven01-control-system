@@ -99,3 +99,5 @@ class UdpClient(QObject):
                     self.connection_changed.emit(False)
             except (json.JSONDecodeError, OSError):
                 pass
+            
+            

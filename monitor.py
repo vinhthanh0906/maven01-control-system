@@ -4,11 +4,11 @@ app_window.py — PyQt6 main window, wires UDP client to control panel.
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QStatusBar, QLabel
 from PyQt6.QtCore import Qt
 
-from dashboard import DashboardTab
+from new_dashboard import DashboardTab
 from controller import ControlPanelTab
 from connection.client_udp import UdpClient
 
-ESP32_IP    = "192.168.1.5"   # default — user overrides in the IP field
+ESP32_IP    = "192.168.4.1"   # default — user overrides in the IP field
 UDP_SEND    = 4210
 UDP_RECV    = 4211
 
@@ -85,3 +85,10 @@ class RoverApp(QMainWindow):
     def closeEvent(self, event):
         self._udp.stop()
         event.accept()
+        
+    
+    
+    
+        
+            
+    

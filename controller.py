@@ -70,7 +70,7 @@ class ControlPanelTab(QWidget):
         ip_row = QHBoxLayout()
         ip_lbl = QLabel("ESP32 IP:")
         ip_lbl.setStyleSheet("color:#888; font-size:10pt;")
-        self._ip_input = QLineEdit("192.168.1.xxx")
+        self._ip_input = QLineEdit("192.168.4.1")
         self._ip_input.setFixedWidth(160)
         self._ip_input.setStyleSheet(
             "background:#161820; color:#2a82da; border:1px solid #2e3040;"
@@ -249,3 +249,13 @@ class ControlPanelTab(QWidget):
             self._send("stop")
         else:
             super().keyReleaseEvent(event)
+            
+            
+
+
+#Place holder fo
+class AutoPilot(QWidget):
+    pass
+
+
+    
