@@ -1,11 +1,10 @@
 """
-app_window.py — PyQt6 main window, wires UDP client to control panel.
+app_window.py — PyQt6 main window, wires UDP client to dashboard.
 """
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QStatusBar, QLabel
+from PyQt6.QtWidgets import QMainWindow, QStatusBar, QLabel
 from PyQt6.QtCore import Qt
 
-from new_dashboard import DashboardTab
-from controller import ControlPanelTab
+from new_dashboard_2 import DashboardTab
 from connection.client_udp import UdpClient
 
 ESP32_IP    = "192.168.4.1"   # default — user overrides in the IP field
@@ -23,21 +22,8 @@ class RoverApp(QMainWindow):
         self._start_udp()
 
     def _build_ui(self):
-        self._tabs = QTabWidget()
-        self._tabs.setStyleSheet("""
-            QTabWidget::pane { border:1px solid #2e3040; border-radius:8px; background:#1a1c24; }
-            QTabBar::tab { background:#1e2028; color:#777; border:1px solid #2e3040;
-                           border-bottom:none; padding:8px 24px;
-                           border-top-left-radius:6px; border-top-right-radius:6px;
-                           font-size:10pt; margin-right:2px; }
-            QTabBar::tab:selected { background:#1a1c24; color:#2a82da; border-bottom:2px solid #2a82da; }
-            QTabBar::tab:hover:!selected { background:#252730; color:#aaa; }
-        """)
         self._dashboard = DashboardTab()
-        self._control   = ControlPanelTab()
-        self._tabs.addTab(self._dashboard, "  Dashboard  ")
-        self._tabs.addTab(self._control,   "  Control Panel  ")
-        self.setCentralWidget(self._tabs)
+        self.setCentralWidget(self._dashboard)
 
         sb = QStatusBar()
         sb.setStyleSheet("background:#161820; color:#555; font-size:9pt; border-top:1px solid #2e3040;")
@@ -55,24 +41,15 @@ class RoverApp(QMainWindow):
         self._udp = UdpClient(esp32_ip=ESP32_IP,
                               esp32_port=UDP_SEND,
                               listen_port=UDP_RECV)
-        # Rover status → dashboard + control panel
+        # Rover status → dashboard
         self._udp.status_received  .connect(self._dashboard.update_data)
-        self._udp.status_received  .connect(self._control.on_rover_status)
-        self._udp.connection_changed.connect(self._control.on_connection_changed)
+        self._udp.connection_changed.connect(self._dashboard.on_connection_changed)
         self._udp.connection_changed.connect(self._on_connection)
 
-        # Control panel → UDP send (or IP change)
-        self._control.command_sent.connect(self._on_command)
+        # Dashboard connection requests → UDP
+        self._dashboard.connection_requested.connect(self._on_connection_request)
 
         self._udp.start()
-
-    def _on_command(self, direction: str, speed: int):
-        if direction.startswith("__ip__"):
-            new_ip = direction[6:]
-            self._udp.update_esp_ip(new_ip)
-            self._sb_esp.setText(f"ESP32: {new_ip}:{UDP_SEND}")
-        else:
-            self._udp.send_command(direction, speed)
 
     def _on_connection(self, connected: bool):
         if connected:
@@ -81,6 +58,18 @@ class RoverApp(QMainWindow):
         else:
             self._sb_status.setText("Status: waiting for ESP32")
             self._sb_status.setStyleSheet("color:#e74c3c; padding:0 10px;")
+
+    def _on_connection_request(self, ip_address: str, should_connect: bool):
+        """Handle connection/disconnection requests from dashboard."""
+        if should_connect:
+            # Update ESP32 IP and reconnect
+            self._udp.update_esp_ip(ip_address)
+            self._sb_esp.setText(f"ESP32: {ip_address}:{UDP_SEND}")
+        else:
+            # Disconnect
+            self._udp.stop()
+            # Optionally restart with default IP
+            self._udp.start()
 
     def closeEvent(self, event):
         self._udp.stop()
