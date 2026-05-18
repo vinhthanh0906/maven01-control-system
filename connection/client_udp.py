@@ -37,12 +37,12 @@ class UdpClient(QObject):
 
         # Send socket (UDP, no bind needed)
         self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._send_sock.settimeout(1.0)
+        self._send_sock.settimeout(0.05)  # 50ms timeout for local UDP
 
         # Recv socket (bind to listen_port)
         self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._recv_sock.settimeout(2.0)
+        self._recv_sock.settimeout(0.5)   # 500ms timeout for faster disconnection detection
 
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
 
