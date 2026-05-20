@@ -74,7 +74,7 @@ class CompassWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._heading = 0.0
-        self.setMinimumSize(160, 160)
+        self.setMinimumHeight(80)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def set_heading(self, deg):
@@ -85,72 +85,65 @@ class CompassWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        cx, cy = w / 2, h / 2
-        r = min(w, h) / 2 - 10
-
-        # Outer ring
+        
+        # Linear compass strip
+        strip_y = h / 2 - 15
+        strip_h = 30
+        strip_margin = 60
+        strip_w = w - strip_margin * 2
+        strip_x = strip_margin
+        
+        # Background
         p.setPen(QPen(QColor(BORDER), 1.5))
-        p.setBrush(QBrush(QColor(BG1)))
-        p.drawEllipse(QPointF(cx, cy), r, r)
-
-        # Tick marks + cardinal labels
-        font = QFont("Courier New", 7)
-        font.setBold(True)
-        p.setFont(font)
-        cardinals = {0: "N", 90: "E", 180: "S", 270: "W"}
-        for deg in range(0, 360, 10):
-            rad = math.radians(deg - 90)
-            tick = 10 if deg % 90 == 0 else (6 if deg % 45 == 0 else 3)
-            x1 = cx + (r - tick) * math.cos(rad)
-            y1 = cy + (r - tick) * math.sin(rad)
-            x2 = cx + r * math.cos(rad)
-            y2 = cy + r * math.sin(rad)
-            color = QColor(ACCENT) if deg % 90 == 0 else QColor(DIM)
-            p.setPen(QPen(color, 1.5 if deg % 90 == 0 else 0.8))
-            p.drawLine(int(x1), int(y1), int(x2), int(y2))
-            if deg in cardinals:
-                lx = cx + (r - 22) * math.cos(rad)
-                ly = cy + (r - 22) * math.sin(rad)
-                p.setPen(QColor(ACCENT if deg == 0 else TEXT_SEC))
-                p.drawText(QRectF(lx - 8, ly - 8, 16, 16),
-                           Qt.AlignmentFlag.AlignCenter, cardinals[deg])
-
-        # Heading needle
-        needle_rad = math.radians(self._heading - 90)
-        nx = cx + (r - 25) * math.cos(needle_rad)
-        ny = cy + (r - 25) * math.sin(needle_rad)
-        tail_rad = math.radians(self._heading + 90)
-        tx = cx + 14 * math.cos(tail_rad)
-        ty = cy + 14 * math.sin(tail_rad)
-
-        path = QPainterPath()
-        path.moveTo(nx, ny)
-        perp = math.radians(self._heading)
-        px1 = cx + 7 * math.cos(perp)
-        py1 = cy + 7 * math.sin(perp)
-        px2 = cx - 7 * math.cos(perp)
-        py2 = cy - 7 * math.sin(perp)
-        path.lineTo(px1, py1)
-        path.lineTo(tx, ty)
-        path.lineTo(px2, py2)
-        path.closeSubpath()
-
+        p.setBrush(QColor(BG1))
+        p.drawRoundedRect(int(strip_x), int(strip_y), int(strip_w), int(strip_h), 8, 8)
+        
+        # Heading tape: show ±90° around current heading
+        font_small = QFont("Courier New", 7)
+        font_large = QFont("Courier New", 9)
+        font_large.setBold(True)
+        
+        p.setPen(QColor(TEXT_DIM))
+        p.setFont(font_small)
+        
+        pixels_per_degree = strip_w / 180.0  # Full 180° range displayed
+        center_x = strip_x + strip_w / 2
+        
+        # Draw degree ticks and labels (-90 to +90 relative to heading)
+        for rel_deg in range(-90, 91, 10):
+            abs_deg = (self._heading + rel_deg) % 360
+            x = center_x + rel_deg * pixels_per_degree
+            
+            if strip_x < x < strip_x + strip_w:
+                # Tick mark
+                tick_h = 8 if rel_deg % 30 == 0 else 4
+                p.setPen(QPen(QColor(ACCENT if rel_deg % 30 == 0 else DIM), 1.5 if rel_deg % 30 == 0 else 0.8))
+                p.drawLine(int(x), int(strip_y + strip_h - tick_h), int(x), int(strip_y + strip_h))
+                
+                # Labels every 30°
+                if rel_deg % 30 == 0:
+                    p.setPen(QColor(TEXT_SEC if rel_deg != 0 else ACCENT))
+                    p.setFont(font_small)
+                    label = f"{int(abs_deg):03d}°"
+                    p.drawText(QRectF(x - 20, strip_y - 12, 40, 10),
+                              Qt.AlignmentFlag.AlignCenter, label)
+        
+        # Center indicator (triangle pointing down)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(ACCENT))
-        p.drawPath(path)
-
-        # Center dot
-        p.setBrush(QColor(BG0))
-        p.setPen(QPen(QColor(ACCENT), 1))
-        p.drawEllipse(QPointF(cx, cy), 5, 5)
-
-        # Heading text
+        p.setBrush(QColor(GREEN))
+        triangle = QPolygonF([
+            QPointF(center_x, strip_y - 8),
+            QPointF(center_x - 8, strip_y),
+            QPointF(center_x + 8, strip_y)
+        ])
+        p.drawPolygon(triangle)
+        
+        # Current heading display at bottom
         p.setPen(QColor(TEXT_PRI))
-        font2 = QFont("Courier New", 9)
-        font2.setBold(True)
-        p.setFont(font2)
-        p.drawText(QRectF(cx - 25, cy + r - 28, 50, 16),
-                   Qt.AlignmentFlag.AlignCenter, f"{int(self._heading):03d}°")
+        p.setFont(font_large)
+        p.drawText(QRectF(w/2 - 60, strip_y + strip_h + 12, 120, 20),
+                  Qt.AlignmentFlag.AlignCenter, f"HDG {int(self._heading):03d}°")
+        
         p.end()
 
 
@@ -547,9 +540,9 @@ class DashboardTab(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        root.addLayout(self._build_left(),   2)
-        root.addLayout(self._build_center(), 3)
-        root.addLayout(self._build_right(),  2)
+        root.addLayout(self._build_left(),   3)
+        root.addLayout(self._build_center(), 10)
+        root.addLayout(self._build_right(),  3)
 
     # ── LEFT PANEL ────────────────────────────────────────────────────────────
 
@@ -670,9 +663,8 @@ class DashboardTab(QWidget):
         hdr.addStretch(); hdr.addWidget(self._compass_dot)
         cpl.addLayout(hdr)
         self._compass = CompassWidget()
-        self._compass.setMinimumHeight(180)
         cpl.addWidget(self._compass)
-        col.addWidget(cp, 2)
+        col.addWidget(cp, 1)
 
         # Camera
         cam = panel()
@@ -805,9 +797,11 @@ class DashboardTab(QWidget):
         self._battery.set_level(85.0, "MAIN")
 
         # System message
+        temp_str = f"{temp:.1f}°C" if temp is not None else "—"
+        hum_str  = f"{hum:.1f}%" if hum is not None else "—"
         self._log_msg(f"[ T+{uptime:05d}s ]  CMD={cmd.upper():8s}  "
                       f"SPD={speed:3d}  "
-                      f"T={temp:.1f}°C  H={hum:.1f}%")
+                      f"T={temp_str}  H={hum_str}")
 
     def _log_msg(self, text):
         self._msg_lines.append(text)
