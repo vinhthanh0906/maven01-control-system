@@ -1,9 +1,3 @@
-"""
-dashboard.py — Rover Mission Control Dashboard (PyQt6)
-Full redesign: Left panel (power/gyro/mode/telemetry),
-Center (compass/camera/radar), Right (environment sensors)
-"""
-
 import math
 import time
 from collections import deque
@@ -19,8 +13,6 @@ from PyQt6.QtGui import (
     QPolygonF, QConicalGradient
 )
 
-
-# ── palette ───────────────────────────────────────────────────────────────────
 BG0      = "#0a0c12"
 BG1      = "#0f1118"
 BG2      = "#14161f"
@@ -38,6 +30,9 @@ TEXT_SEC = "#6b7299"
 TEXT_DIM = "#3a3f55"
 
 
+'''
+Define global panel size 
+'''
 def panel(parent=None):
     f = QFrame(parent)
     f.setStyleSheet(f"""
@@ -50,6 +45,7 @@ def panel(parent=None):
     return f
 
 
+# split into : left, middle, right
 def section_label(text):
     l = QLabel(text.upper())
     l.setStyleSheet(f"""
@@ -62,13 +58,21 @@ def section_label(text):
     return l
 
 
+#online/ off line
 def status_dot(online=True):
     dot = QLabel("●")
     dot.setStyleSheet(f"color: {GREEN if online else RED}; font-size: 8pt;")
     return dot
 
 
-# ── custom widgets ────────────────────────────────────────────────────────────
+''' Custom widget 
+- Linear compass view 
+- Radar 
+- gyro 
+- 
+
+'''
+
 
 class CompassWidget(QWidget):
     def __init__(self, parent=None):
@@ -474,59 +478,15 @@ class SensorBlock(QWidget):
         """)
 
 
-class BatteryWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._level = 85.0
-        self._source = "MAIN"
-        self.setMinimumHeight(56)
 
-    def set_level(self, level, source="MAIN"):
-        self._level = level
-        self._source = source
-        self.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-
-        bw, bh = w - 40, 28
-        bx, by = 20, (h - bh) / 2
-
-        # Battery shell
-        p.setPen(QPen(QColor(DIM), 1.5))
-        p.setBrush(QColor(BG1))
-        p.drawRoundedRect(QRectF(bx, by, bw, bh), 4, 4)
-        # Terminal nub
-        p.setBrush(QColor(DIM))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(QRectF(bx + bw, by + bh/2 - 5, 5, 10), 2, 2)
-
-        # Fill
-        fill_w = max(4, (self._level / 100.0) * (bw - 4))
-        color  = QColor(GREEN) if self._level > 50 else QColor(AMBER) if self._level > 20 else QColor(RED)
-        p.setBrush(color)
-        p.drawRoundedRect(QRectF(bx + 2, by + 2, fill_w, bh - 4), 3, 3)
-
-        # Text
-        p.setPen(QColor(TEXT_PRI))
-        font = QFont("Courier New", 9)
-        font.setBold(True)
-        p.setFont(font)
-        p.drawText(QRectF(bx, by, bw, bh),
-                   Qt.AlignmentFlag.AlignCenter,
-                   f"{self._level:.0f}%  [{self._source}]")
-        p.end()
-
-
-# ── main dashboard ────────────────────────────────────────────────────────────
 
 class DashboardTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_cmd = "stop"
         self._sim_heading = 0.0
+        self._heading_offset = 0.0  # Track heading changes from gyro
+        self._msg_lines = []        # Message log buffer
         self._build_ui()
 
         # Animate compass placeholder
@@ -551,34 +511,8 @@ class DashboardTab(QWidget):
         col.setSpacing(6)
 
         # Power
-        pw = panel()
-        pl = QVBoxLayout(pw)
-        pl.setContentsMargins(10, 8, 10, 8)
-        pl.setSpacing(4)
-        hdr = QHBoxLayout()
-        hdr.addWidget(section_label("Power"))
-        self._pwr_dot = QLabel("●")
-        self._pwr_dot.setStyleSheet(f"color:{GREEN}; font-size:8pt;")
-        hdr.addStretch(); hdr.addWidget(self._pwr_dot)
-        pl.addLayout(hdr)
-        self._battery = BatteryWidget()
-        pl.addWidget(self._battery)
-        # Source selector pills
-        src_row = QHBoxLayout()
-        src_row.setSpacing(4)
-        for src in ("MAIN", "BACKUP"):
-            b = QLabel(src)
-            b.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            b.setStyleSheet(f"""
-                background:{'#0d2a1a' if src=='MAIN' else BG3};
-                color:{'#00ff88' if src=='MAIN' else TEXT_DIM};
-                border:1px solid {'#00ff88' if src=='MAIN' else BORDER};
-                border-radius:10px; font-size:8pt; font-family:'Courier New';
-                padding:2px 10px;
-            """)
-            src_row.addWidget(b)
-        pl.addLayout(src_row)
-        col.addWidget(pw)
+        self._s_voltage = SensorBlock("Voltage", "V", "—", "#ffbb44")
+        col.addWidget(self._s_voltage)
 
         # Gyro
         gy = panel()
@@ -603,31 +537,31 @@ class DashboardTab(QWidget):
         gl.addLayout(rp)
         col.addWidget(gy)
 
-        # Mode
-        mo = panel()
-        ml = QVBoxLayout(mo)
-        ml.setContentsMargins(10, 8, 10, 8)
-        ml.setSpacing(6)
-        ml.addWidget(section_label("Drive Mode"))
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(6)
-        self._mode_fast = QLabel("⚡ FAST")
-        self._mode_eco  = QLabel("🌿 ECO")
-        self._mode_fast.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._mode_eco .setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._mode_fast.setStyleSheet(f"""
-            background:#1a1200; color:{AMBER}; border:1px solid {AMBER};
-            border-radius:8px; font-size:9pt; font-family:'Courier New';
-            padding:6px 0;
-        """)
-        self._mode_eco.setStyleSheet(f"""
-            background:{BG3}; color:{DIM}; border:1px solid {BORDER};
-            border-radius:8px; font-size:9pt; font-family:'Courier New';
-            padding:6px 0;
-        """)
-        mode_row.addWidget(self._mode_fast); mode_row.addWidget(self._mode_eco)
-        ml.addLayout(mode_row)
-        col.addWidget(mo)
+        # Mode: The rover drive mode 
+        # mo = panel()
+        # ml = QVBoxLayout(mo)
+        # ml.setContentsMargins(10, 8, 10, 8)
+        # ml.setSpacing(6)
+        # ml.addWidget(section_label("Drive Mode"))
+        # mode_row = QHBoxLayout()
+        # mode_row.setSpacing(6)
+        # self._mode_fast = QLabel("⚡ FAST")
+        # self._mode_eco  = QLabel("🌿 ECO")
+        # self._mode_fast.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self._mode_eco .setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self._mode_fast.setStyleSheet(f"""
+        #     background:#1a1200; color:{AMBER}; border:1px solid {AMBER};
+        #     border-radius:8px; font-size:9pt; font-family:'Courier New';
+        #     padding:6px 0;
+        # """)
+        # self._mode_eco.setStyleSheet(f"""
+        #     background:{BG3}; color:{DIM}; border:1px solid {BORDER};
+        #     border-radius:8px; font-size:9pt; font-family:'Courier New';
+        #     padding:6px 0;
+        # """)
+        # mode_row.addWidget(self._mode_fast); mode_row.addWidget(self._mode_eco)
+        # ml.addLayout(mode_row)
+        # col.addWidget(mo)
 
         # Rover CAD
         cad = panel()
@@ -736,6 +670,8 @@ class DashboardTab(QWidget):
         for s in (self._s_temp, self._s_hum, self._s_rad, self._s_aqi):
             col.addWidget(s, 1)
 
+        col.addStretch()
+
         # Status messages
         msg = panel()
         ml = QVBoxLayout(msg)
@@ -763,16 +699,33 @@ class DashboardTab(QWidget):
         temp     = payload.get("temperature", None)
         hum      = payload.get("humidity",    None)
         ok       = payload.get("sensor_ok",   False)
+        voltage  = payload.get("voltage",     None)
+        current  = payload.get("current",     None)
+        power    = payload.get("power",       None)
+        ina_ok   = payload.get("ina_ok",      False)
         cmd      = payload.get("cmd",         "stop")
         uptime   = payload.get("uptime",      0)
         speed    = payload.get("speed",       0)
 
-        # Sensor blocks
+        # ── Voltage display (INA219) ──────────────────────────────────────────
+        if ina_ok and voltage is not None:
+            self._s_voltage.set_value(f"{voltage:.2f}", online=True)
+            # Alert if voltage is too low
+            self._s_voltage.set_alert(voltage < 10.5)
+        else:
+            self._s_voltage.set_value("—", online=False)
+
+        # ── Temperature & Humidity (DHT11) ────────────────────────────────────
         if temp is not None:
             self._s_temp.set_value(f"{temp:.1f}", online=ok)
             self._s_temp.set_alert(temp > 40 or temp < 5)
+        else:
+            self._s_temp.set_value("—", online=False)
+            
         if hum is not None:
             self._s_hum.set_value(f"{hum:.1f}", online=ok)
+        else:
+            self._s_hum.set_value("—", online=False)
 
         # Placeholders stay offline
         self._s_rad.set_value("—", online=False)
@@ -793,15 +746,13 @@ class DashboardTab(QWidget):
         self._cad_status.setStyleSheet(
             f"color:{color}; font-size:8pt; font-family:'Courier New';")
 
-        # Battery placeholder
-        self._battery.set_level(85.0, "MAIN")
-
         # System message
         temp_str = f"{temp:.1f}°C" if temp is not None else "—"
         hum_str  = f"{hum:.1f}%" if hum is not None else "—"
+        volt_str = f"{voltage:.2f}V" if voltage is not None else "—"
         self._log_msg(f"[ T+{uptime:05d}s ]  CMD={cmd.upper():8s}  "
                       f"SPD={speed:3d}  "
-                      f"T={temp_str}  H={hum_str}")
+                      f"V={volt_str}  T={temp_str}  H={hum_str}")
 
     def _log_msg(self, text):
         self._msg_lines.append(text)
@@ -810,9 +761,6 @@ class DashboardTab(QWidget):
         self._msg_label.setText("\n".join(self._msg_lines))
 
     def _tick_anim(self):
-        # Slowly rotate compass heading for visual feedback
-        if self._last_cmd == "left":
-            self._sim_heading = (self._sim_heading - 2) % 360
-        elif self._last_cmd == "right":
-            self._sim_heading = (self._sim_heading + 2) % 360
-        self._compass.set_heading(self._sim_heading)
+        # Only update compass with simulated data if IMU is offline
+        # When IMU is online, heading is updated directly from gyro integration
+        pass

@@ -56,6 +56,7 @@ class ControlPanelTab(QWidget):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
+        #Title design 
         title = QLabel("Rover UDP Control")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("color:#aaa; font-size:14pt; font-weight:500;")

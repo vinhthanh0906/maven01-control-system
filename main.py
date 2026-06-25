@@ -11,7 +11,7 @@ Run: python main.py
 import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
-from monitor import RoverApp
+from monitor.merge_monitor import RoverApp
 
 
 def main():

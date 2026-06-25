@@ -1,0 +1,1038 @@
+import math
+import time
+from collections import deque
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QGridLayout, QSizePolicy, QProgressBar,
+    QPushButton, QLineEdit, QGroupBox
+)
+from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
+from PyQt6.QtGui import (
+    QPainter, QPen, QColor, QBrush, QFont,
+    QPainterPath, QLinearGradient, QRadialGradient,
+    QPolygonF, QConicalGradient
+)
+
+BG0      = "#0a0c12"
+BG1      = "#0f1118"
+BG2      = "#14161f"
+BG3      = "#1a1d28"
+BORDER   = "#1e2235"
+ACCENT   = "#00d4ff"
+ACCENT2  = "#0077ff"
+GREEN    = "#00ff88"
+AMBER    = "#ffaa00"
+RED      = "#ff3355"
+PURPLE   = "#9966ff"
+DIM      = "#3a3f55"
+TEXT_PRI = "#e8ecff"
+TEXT_SEC = "#6b7299"
+TEXT_DIM = "#3a3f55"
+
+# ── Controller button styles ──────────────────────────────────────────────────
+_BTN_MOVE = """
+QPushButton {
+    background:#1e3a5f; color:#5dade2;
+    border:1px solid #2e6090; border-radius:10px;
+    font-size:18pt; font-weight:600;
+    min-width:58px; min-height:58px;
+}
+QPushButton:pressed { background:#2a82da; color:#fff; }
+"""
+_BTN_STOP = """
+QPushButton {
+    background:#4a1a1a; color:#e74c3c;
+    border:1px solid #8b3030; border-radius:10px;
+    font-size:18pt; font-weight:600;
+    min-width:58px; min-height:58px;
+}
+QPushButton:pressed { background:#c0392b; color:#fff; }
+"""
+_BTN_SPEED = """
+QPushButton {
+    background:#1e3820; color:#2ecc71;
+    border:1px solid #2e6040; border-radius:6px;
+    font-size:9pt; min-width:52px; min-height:26px;
+}
+QPushButton:pressed { background:#27ae60; color:#fff; }
+QPushButton:checked  { background:#27ae60; color:#fff; border-color:#1e8449; }
+"""
+
+
+'''
+Define global panel size 
+'''
+def panel(parent=None):
+    f = QFrame(parent)
+    f.setStyleSheet(f"""
+        QFrame {{
+            background: {BG2};
+            border: 1px solid {BORDER};
+            border-radius: 10px;
+        }}
+    """)
+    return f
+
+
+# split into : left, middle, right
+def section_label(text):
+    l = QLabel(text.upper())
+    l.setStyleSheet(f"""
+        color: {TEXT_SEC};
+        font-size: 8pt;
+        font-family: 'Courier New', monospace;
+        letter-spacing: 2px;
+        padding: 4px 0px 2px 0px;
+    """)
+    return l
+
+
+#online/ off line
+def status_dot(online=True):
+    dot = QLabel("●")
+    dot.setStyleSheet(f"color: {GREEN if online else RED}; font-size: 8pt;")
+    return dot
+
+
+''' Custom widget 
+- Linear compass view 
+- Radar 
+- gyro 
+- 
+
+'''
+
+
+class CompassWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._heading = 0.0
+        self.setMinimumHeight(80)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_heading(self, deg):
+        self._heading = deg % 360
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        
+        # Linear compass strip
+        strip_y = h / 2 - 15
+        strip_h = 30
+        strip_margin = 60
+        strip_w = w - strip_margin * 2
+        strip_x = strip_margin
+        
+        # Background
+        p.setPen(QPen(QColor(BORDER), 1.5))
+        p.setBrush(QColor(BG1))
+        p.drawRoundedRect(int(strip_x), int(strip_y), int(strip_w), int(strip_h), 8, 8)
+        
+        # Heading tape: show ±90° around current heading
+        font_small = QFont("Courier New", 7)
+        font_large = QFont("Courier New", 9)
+        font_large.setBold(True)
+        
+        p.setPen(QColor(TEXT_DIM))
+        p.setFont(font_small)
+        
+        pixels_per_degree = strip_w / 180.0  # Full 180° range displayed
+        center_x = strip_x + strip_w / 2
+        
+        # Draw degree ticks and labels (-90 to +90 relative to heading)
+        for rel_deg in range(-90, 91, 10):
+            abs_deg = (self._heading + rel_deg) % 360
+            x = center_x + rel_deg * pixels_per_degree
+            
+            if strip_x < x < strip_x + strip_w:
+                # Tick mark
+                tick_h = 8 if rel_deg % 30 == 0 else 4
+                p.setPen(QPen(QColor(ACCENT if rel_deg % 30 == 0 else DIM), 1.5 if rel_deg % 30 == 0 else 0.8))
+                p.drawLine(int(x), int(strip_y + strip_h - tick_h), int(x), int(strip_y + strip_h))
+                
+                # Labels every 30°
+                if rel_deg % 30 == 0:
+                    p.setPen(QColor(TEXT_SEC if rel_deg != 0 else ACCENT))
+                    p.setFont(font_small)
+                    label = f"{int(abs_deg):03d}°"
+                    p.drawText(QRectF(x - 20, strip_y - 12, 40, 10),
+                              Qt.AlignmentFlag.AlignCenter, label)
+        
+        # Center indicator (triangle pointing down)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(GREEN))
+        triangle = QPolygonF([
+            QPointF(center_x, strip_y - 8),
+            QPointF(center_x - 8, strip_y),
+            QPointF(center_x + 8, strip_y)
+        ])
+        p.drawPolygon(triangle)
+        
+        # Current heading display at bottom
+        p.setPen(QColor(TEXT_PRI))
+        p.setFont(font_large)
+        p.drawText(QRectF(w/2 - 60, strip_y + strip_h + 12, 120, 20),
+                  Qt.AlignmentFlag.AlignCenter, f"HDG {int(self._heading):03d}°")
+        
+        p.end()
+
+
+class GyroWidget(QWidget):
+    """Simplified 3D horizon indicator."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._roll  = 0.0
+        self._pitch = 0.0
+        self.setMinimumSize(140, 100)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_attitude(self, roll, pitch):
+        self._roll  = roll
+        self._pitch = pitch
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        r = min(w, h) / 2 - 6
+
+        p.setClipRegion(__import__('PyQt6.QtGui', fromlist=['QRegion']).QRegion(
+            int(cx - r), int(cy - r), int(r * 2), int(r * 2), 
+            __import__('PyQt6.QtGui', fromlist=['QRegion']).QRegion.RegionType.Ellipse))
+
+        pitch_offset = self._pitch / 90.0 * r
+        roll_rad = math.radians(self._roll)
+
+        # Sky
+        sky = QLinearGradient(0, 0, 0, h)
+        sky.setColorAt(0, QColor("#003366"))
+        sky.setColorAt(1, QColor("#0055aa"))
+        p.fillRect(0, 0, w, h, sky)
+
+        # Ground (rotated rect)
+        p.save()
+        p.translate(cx, cy + pitch_offset)
+        p.rotate(self._roll)
+        ground = QLinearGradient(0, 0, 0, r)
+        ground.setColorAt(0, QColor("#3d2200"))
+        ground.setColorAt(1, QColor("#5a3300"))
+        p.setBrush(ground)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(-w, 0, w * 2, h)
+        p.restore()
+
+        # Horizon line
+        p.save()
+        p.translate(cx, cy + pitch_offset)
+        p.rotate(self._roll)
+        p.setPen(QPen(QColor("#ffffff"), 1.5))
+        p.drawLine(-int(r * 1.5), 0, int(r * 1.5), 0)
+        p.restore()
+
+        p.setClipping(False)
+
+        # Outer ring
+        p.setPen(QPen(QColor(BORDER), 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), r, r)
+
+        # Center crosshair
+        p.setPen(QPen(QColor(AMBER), 1.5))
+        p.drawLine(int(cx - 20), int(cy), int(cx - 6), int(cy))
+        p.drawLine(int(cx + 6),  int(cy), int(cx + 20), int(cy))
+        p.drawLine(int(cx), int(cy - 6), int(cx), int(cy + 6))
+
+        p.end()
+
+
+class RadarWidget(QWidget):
+    """
+    Half-circle radar sweep (top half) — front-facing ultrasonic FOV.
+    Sweep bounces 0°→180°→0° like a real sonar head.
+    Origin sits at bottom-center, fan opens upward.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle   = 0.0      # 0–180 degrees across the half circle
+        self._dir     = 1        # 1 = sweeping right, -1 = sweeping left
+        self._blips   = []       # list of (angle_deg, dist 0-1, age)
+        self._timer   = QTimer(self)
+        self._timer.timeout.connect(self._sweep)
+        self._timer.start(20)
+        self.setMinimumHeight(110)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def _sweep(self):
+        self._angle += self._dir * 1.8
+        if self._angle >= 180:
+            self._angle = 180; self._dir = -1
+        elif self._angle <= 0:
+            self._angle = 0;   self._dir = 1
+        # Age blips
+        self._blips = [(a, d, age + 1) for a, d, age in self._blips if age < 80]
+        self.update()
+
+    def add_blip(self, angle_deg: float, dist_norm: float):
+        """Add a detection blip. angle 0–180, dist 0–1 (1 = max range)."""
+        self._blips.append((angle_deg, dist_norm, 0))
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Origin: bottom center; radius fills the widget
+        cx = w / 2
+        cy = h - 10          # origin sits near bottom edge
+        r  = min(w / 2, h) - 12
+
+        # ── clip to upper half-circle ──────────────────────────────────────
+        clip = QPainterPath()
+        clip.moveTo(cx, cy)
+        clip.arcTo(QRectF(cx - r, cy - r, r * 2, r * 2), 0, 180)
+        clip.closeSubpath()
+        p.setClipPath(clip)
+
+        # Background fill
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(BG1))
+        p.drawPath(clip)
+
+        # ── arc rings ──────────────────────────────────────────────────────
+        pen_ring = QPen(QColor(DIM), 0.6)
+        p.setPen(pen_ring)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(1, 5):
+            ri = r * i / 4
+            p.drawArc(QRectF(cx - ri, cy - ri, ri * 2, ri * 2), 0, 180 * 16)
+
+        # ── radial spokes every 30° ────────────────────────────────────────
+        p.setPen(QPen(QColor(DIM), 0.5))
+        for deg in range(0, 181, 30):
+            rad = math.radians(180 - deg)   # 0°=left, 180°=right mapped to screen
+            p.drawLine(int(cx), int(cy),
+                       int(cx + r * math.cos(rad)),
+                       int(cy - r * math.sin(rad)))
+
+        # ── sweep glow (conical, clipped to half) ─────────────────────────
+        # Convert our 0–180 angle to screen angle (180°=left, 0°=right)
+        screen_deg = 180 - self._angle
+        cg = QConicalGradient(cx, cy, screen_deg)
+        cg.setColorAt(0.0,   QColor(0, 212, 255, 200))
+        cg.setColorAt(0.12,  QColor(0, 212, 255, 50))
+        cg.setColorAt(0.13,  QColor(0, 0, 0, 0))
+        cg.setColorAt(1.0,   QColor(0, 0, 0, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(cg)
+        p.drawPath(clip)
+
+        # ── sweep line ────────────────────────────────────────────────────
+        rad = math.radians(180 - self._angle)
+        ex  = cx + r * math.cos(rad)
+        ey  = cy - r * math.sin(rad)
+        p.setPen(QPen(QColor(ACCENT), 1.8))
+        p.drawLine(int(cx), int(cy), int(ex), int(ey))
+
+        # ── blips ─────────────────────────────────────────────────────────
+        for a, d, age in self._blips:
+            alpha  = max(0, 255 - int(age * 3))
+            brad   = math.radians(180 - a)
+            bx     = cx + r * d * math.cos(brad)
+            by_    = cy - r * d * math.sin(brad)
+            size   = max(2, 6 - age // 15)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 255, 136, alpha))
+            p.drawEllipse(QPointF(bx, by_), size, size)
+
+        p.setClipping(False)
+
+        # ── outer arc border ──────────────────────────────────────────────
+        p.setPen(QPen(QColor(BORDER), 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawArc(QRectF(cx - r, cy - r, r * 2, r * 2), 0, 180 * 16)
+        p.drawLine(int(cx - r), int(cy), int(cx + r), int(cy))  # baseline
+
+        # Origin dot
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(ACCENT))
+        p.drawEllipse(QPointF(cx, cy), 3, 3)
+
+        # ── range labels ──────────────────────────────────────────────────
+        font = QFont("Courier New", 6)
+        p.setFont(font)
+        p.setPen(QColor(TEXT_DIM))
+        for i, lbl in enumerate(("25", "50", "75", "100"), 1):
+            lx = cx + r * i / 4 + 3
+            p.drawText(int(lx), int(cy) - 2, lbl + "cm")
+
+        # Angle ticks at bottom baseline
+        for deg in (0, 30, 60, 90, 120, 150, 180):
+            rad2 = math.radians(180 - deg)
+            tx = cx + (r + 6) * math.cos(rad2)
+            ty = cy - (r + 6) * math.sin(rad2)
+            p.drawText(QRectF(tx - 10, ty - 7, 20, 10),
+                       Qt.AlignmentFlag.AlignCenter, f"{deg}°")
+
+        # Pending label
+        p.setPen(QColor(TEXT_DIM))
+        p.drawText(QRectF(cx - 55, cy - r / 2 - 7, 110, 14),
+                   Qt.AlignmentFlag.AlignCenter, "ULTRASONIC — PENDING")
+        p.end()
+
+
+class _CADPainter(QWidget):
+    """Pure painter — 2D top-down rover silhouette (used inside RoverCADWidget)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cmd = "stop"
+        self.setMinimumHeight(110)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_command(self, cmd):
+        self._cmd = cmd
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h   = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        bw, bh = min(w * 0.35, 70), min(h * 0.65, 90)
+
+        left_active  = self._cmd in ("forward", "backward", "left")
+        right_active = self._cmd in ("forward", "backward", "right")
+
+        # Body
+        p.setPen(QPen(QColor(ACCENT2), 1))
+        p.setBrush(QColor(BG3))
+        p.drawRoundedRect(QRectF(cx - bw/2, cy - bh/2, bw, bh), 8, 8)
+
+        # Direction arrow
+        arr_color = QColor(GREEN) if self._cmd not in ("stop", "") else QColor(DIM)
+        p.setPen(QPen(arr_color, 2))
+        if self._cmd == "forward":
+            p.drawLine(int(cx), int(cy + 10), int(cx), int(cy - 10))
+            pts = QPolygonF([QPointF(cx, cy - 18), QPointF(cx - 7, cy - 8), QPointF(cx + 7, cy - 8)])
+            p.setBrush(arr_color); p.drawPolygon(pts)
+        elif self._cmd == "backward":
+            p.drawLine(int(cx), int(cy - 10), int(cx), int(cy + 10))
+            pts = QPolygonF([QPointF(cx, cy + 18), QPointF(cx - 7, cy + 8), QPointF(cx + 7, cy + 8)])
+            p.setBrush(arr_color); p.drawPolygon(pts)
+        elif self._cmd == "left":
+            pts = QPolygonF([QPointF(cx - 18, cy), QPointF(cx - 8, cy - 7), QPointF(cx - 8, cy + 7)])
+            p.setBrush(arr_color); p.drawPolygon(pts)
+        elif self._cmd == "right":
+            pts = QPolygonF([QPointF(cx + 18, cy), QPointF(cx + 8, cy - 7), QPointF(cx + 8, cy + 7)])
+            p.setBrush(arr_color); p.drawPolygon(pts)
+
+        # Wheels (4 corners)
+        ww, wh = 10, 22
+        wheel_col = lambda a: QColor(GREEN) if a else QColor(DIM)
+        for wx, wy, wa in [
+            (cx - bw/2 - ww + 2, cy - bh/2 + 4,  left_active),
+            (cx - bw/2 - ww + 2, cy + bh/2 - 26, left_active),
+            (cx + bw/2 - 2,      cy - bh/2 + 4,  right_active),
+            (cx + bw/2 - 2,      cy + bh/2 - 26, right_active),
+        ]:
+            p.setPen(QPen(wheel_col(wa), 1))
+            p.setBrush(QColor(BG1) if not wa else QColor(GREEN).darker(180))
+            p.drawRoundedRect(QRectF(wx, wy, ww, wh), 3, 3)
+
+        p.end()
+
+
+class RoverCADWidget(QWidget):
+    """
+    Rover top-down CAD view fused with the UDP controller.
+
+    Signals
+    -------
+    command_sent(direction: str, speed: int)
+        Emitted on every directional command or IP change
+        (IP change uses direction="__ip__<new_ip>", speed=0).
+    """
+    command_sent = pyqtSignal(str, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._speed     = 150
+        self._log_lines = []
+        self._build_ui()
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    # ── build ─────────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
+
+        # ── IP bar ────────────────────────────────────────────────────────────
+        ip_row = QHBoxLayout()
+        ip_lbl = QLabel("ESP32 IP:")
+        ip_lbl.setStyleSheet(f"color:{TEXT_SEC}; font-size:9pt;")
+        self._ip_input = QLineEdit("192.168.4.1")
+        self._ip_input.setFixedWidth(130)
+        self._ip_input.setStyleSheet(
+            f"background:{BG1}; color:#2a82da; border:1px solid {BORDER};"
+            "border-radius:5px; padding:3px 6px; font-size:9pt; font-family:monospace;")
+        self._ip_input.textChanged.connect(
+            lambda ip: self.command_sent.emit("__ip__" + ip, 0))
+
+        self._conn_badge = QLabel("not connected")
+        self._conn_badge.setStyleSheet(
+            "background:#2e1a1a; color:#e74c3c; border:1px solid #5a2a2a;"
+            "border-radius:8px; padding:2px 10px; font-size:8pt;")
+
+        ip_row.addWidget(ip_lbl)
+        ip_row.addWidget(self._ip_input)
+        ip_row.addSpacing(8)
+        ip_row.addWidget(self._conn_badge)
+        ip_row.addStretch()
+        root.addLayout(ip_row)
+
+        # ── Main row: CAD painter  +  D-pad  +  right column ─────────────────
+        mid = QHBoxLayout()
+        mid.setSpacing(10)
+
+        # CAD silhouette
+        self._cad_painter = _CADPainter()
+        self._cad_painter.setFixedSize(110, 110)
+        mid.addWidget(self._cad_painter)
+
+        # D-pad
+        dpad_frame = QFrame()
+        dpad_frame.setStyleSheet(
+            f"QFrame{{background:{BG3};border:1px solid {BORDER};border-radius:10px;}}")
+        dpad_frame.setFixedSize(210, 210)
+        dpad = QGridLayout(dpad_frame)
+        dpad.setSpacing(6)
+        dpad.setContentsMargins(16, 16, 16, 16)
+
+        self._btn_fwd  = QPushButton("▲"); self._btn_fwd .setStyleSheet(_BTN_MOVE)
+        self._btn_bwd  = QPushButton("▼"); self._btn_bwd .setStyleSheet(_BTN_MOVE)
+        self._btn_left = QPushButton("◀"); self._btn_left.setStyleSheet(_BTN_MOVE)
+        self._btn_rght = QPushButton("▶"); self._btn_rght.setStyleSheet(_BTN_MOVE)
+        self._btn_stop = QPushButton("■"); self._btn_stop.setStyleSheet(_BTN_STOP)
+
+        dpad.addWidget(self._btn_fwd,  0, 1)
+        dpad.addWidget(self._btn_left, 1, 0)
+        dpad.addWidget(self._btn_stop, 1, 1)
+        dpad.addWidget(self._btn_rght, 1, 2)
+        dpad.addWidget(self._btn_bwd,  2, 1)
+        mid.addWidget(dpad_frame)
+
+        # Right column: direction badge + speed + rover reply
+        right = QVBoxLayout()
+        right.setSpacing(8)
+
+        self._dir_badge = QLabel("STOPPED")
+        self._dir_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._dir_badge.setStyleSheet(
+            f"background:{BG3}; color:#e74c3c; border:1px solid #4a1a1a;"
+            "border-radius:6px; font-size:13pt; font-weight:600; padding:8px;")
+        right.addWidget(self._dir_badge)
+
+        sp_lbl = QLabel("Speed (PWM 0–255)")
+        sp_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sp_lbl.setStyleSheet(f"color:{TEXT_SEC}; font-size:8pt;")
+        right.addWidget(sp_lbl)
+
+        sp_row = QHBoxLayout()
+        sp_row.setSpacing(4)
+        for label, val in (("Slow", 80), ("Mid", 150), ("Fast", 220)):
+            b = QPushButton(label)
+            b.setStyleSheet(_BTN_SPEED)
+            b.setCheckable(True)
+            b.setChecked(val == 150)
+            b.clicked.connect(lambda _, v=val, btn=b: self._set_speed(v, btn))
+            sp_row.addWidget(b)
+            setattr(self, f"_sp_{label.lower()}", b)
+        right.addLayout(sp_row)
+
+        self._speed_lbl = QLabel(f"PWM: {self._speed} / 255")
+        self._speed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._speed_lbl.setStyleSheet(f"color:{GREEN}; font-size:9pt;")
+        right.addWidget(self._speed_lbl)
+
+        # Rover reply box
+        reply_box = QGroupBox("Rover reply")
+        reply_box.setStyleSheet(
+            f"QGroupBox{{color:{TEXT_SEC};font-size:8pt;border:1px solid {BORDER};"
+            "border-radius:6px;margin-top:6px;padding-top:4px;}}"
+            "QGroupBox::title{subcontrol-origin:margin;left:8px;}")
+        rl = QVBoxLayout(reply_box)
+        rl.setSpacing(2)
+        self._rv_cmd    = QLabel("cmd: —")
+        self._rv_speed  = QLabel("speed: —")
+        self._rv_uptime = QLabel("uptime: —")
+        for lbl in (self._rv_cmd, self._rv_speed, self._rv_uptime):
+            lbl.setStyleSheet(f"color:{TEXT_SEC}; font-size:8pt; font-family:monospace;")
+            rl.addWidget(lbl)
+        right.addWidget(reply_box)
+        right.addStretch()
+
+        mid.addLayout(right)
+        root.addLayout(mid)
+
+        # ── Command log ───────────────────────────────────────────────────────
+        log_lbl = QLabel("Command log")
+        log_lbl.setStyleSheet(f"color:{TEXT_SEC}; font-size:8pt;")
+        root.addWidget(log_lbl)
+
+        self._log = QLabel("— waiting for commands —")
+        self._log.setStyleSheet(
+            f"background:{BG1}; color:{TEXT_SEC}; border:1px solid {BORDER};"
+            "border-radius:5px; padding:5px 8px; font-family:monospace; font-size:9pt;")
+        self._log.setFixedHeight(68)
+        self._log.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._log.setWordWrap(True)
+        root.addWidget(self._log)
+
+        # Wire buttons
+        self._btn_fwd .clicked.connect(lambda: self._send("forward"))
+        self._btn_bwd .clicked.connect(lambda: self._send("backward"))
+        self._btn_left.clicked.connect(lambda: self._send("left"))
+        self._btn_rght.clicked.connect(lambda: self._send("right"))
+        self._btn_stop.clicked.connect(lambda: self._send("stop"))
+
+    # ── public API (mirrors ControlPanelTab) ──────────────────────────────────
+
+    def set_command(self, cmd: str):
+        """Update the CAD silhouette (called from DashboardTab.update_data)."""
+        self._cad_painter.set_command(cmd)
+
+    def on_rover_status(self, payload: dict):
+        self._rv_cmd   .setText(f"cmd: {payload.get('cmd','—')}")
+        self._rv_speed .setText(f"speed: {payload.get('speed','—')}")
+        self._rv_uptime.setText(f"uptime: {payload.get('uptime',0)}s")
+
+    def on_connection_changed(self, connected: bool):
+        if connected:
+            self._conn_badge.setText("connected")
+            self._conn_badge.setStyleSheet(
+                "background:#1a2e1a; color:#2ecc71; border:1px solid #2e6040;"
+                "border-radius:8px; padding:2px 10px; font-size:8pt;")
+        else:
+            self._conn_badge.setText("not connected")
+            self._conn_badge.setStyleSheet(
+                "background:#2e1a1a; color:#e74c3c; border:1px solid #5a2a2a;"
+                "border-radius:8px; padding:2px 10px; font-size:8pt;")
+
+    # ── keyboard passthrough (focus must be on this widget or a parent) ───────
+
+    def keyPressEvent(self, event):
+        from PyQt6.QtGui import QKeyEvent
+        mapping = {
+            Qt.Key.Key_W: "forward",  Qt.Key.Key_Up:    "forward",
+            Qt.Key.Key_S: "backward", Qt.Key.Key_Down:  "backward",
+            Qt.Key.Key_A: "left",     Qt.Key.Key_Left:  "left",
+            Qt.Key.Key_D: "right",    Qt.Key.Key_Right: "right",
+            Qt.Key.Key_Space: "stop",
+        }
+        d = mapping.get(event.key())
+        if d and not event.isAutoRepeat():
+            self._send(d)
+        else:
+            super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        nav = {Qt.Key.Key_W, Qt.Key.Key_S, Qt.Key.Key_A, Qt.Key.Key_D,
+               Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right}
+        if event.key() in nav and not event.isAutoRepeat():
+            self._send("stop")
+        else:
+            super().keyReleaseEvent(event)
+
+    # ── private helpers ───────────────────────────────────────────────────────
+
+    def _send(self, direction: str):
+        self.command_sent.emit(direction, self._speed)
+        colors = {
+            "forward": "#2ecc71", "backward": "#e74c3c",
+            "left": "#3498db",    "right":    "#f39c12",
+            "stop": "#e74c3c",
+        }
+        c = colors.get(direction, "#aaa")
+        self._dir_badge.setText(direction.upper())
+        self._dir_badge.setStyleSheet(
+            f"background:{BG3}; color:{c}; border:1px solid {c}44;"
+            "border-radius:6px; font-size:13pt; font-weight:600; padding:8px;")
+        spd = str(self._speed) if direction != "stop" else "0"
+        self._log_lines.append(f"-> {direction.upper():10s}  pwm={spd}")
+        if len(self._log_lines) > 4:
+            self._log_lines.pop(0)
+        self._log.setText("\n".join(self._log_lines))
+
+    def _set_speed(self, value: int, clicked_btn):
+        self._speed = value
+        self._speed_lbl.setText(f"PWM: {value} / 255")
+        for lbl in ("slow", "mid", "fast"):
+            btn = getattr(self, f"_sp_{lbl}")
+            btn.setChecked(btn is clicked_btn)
+
+
+class SensorBlock(QWidget):
+    """A labeled sensor value card with online/offline dot."""
+    def __init__(self, label, unit, value="—", color=ACCENT, parent=None):
+        super().__init__(parent)
+        self._color   = color
+        self._online  = False
+        self._layout  = QVBoxLayout(self)
+        self._layout.setContentsMargins(10, 8, 10, 8)
+        self._layout.setSpacing(2)
+
+        # Header row: label + dot
+        hdr = QHBoxLayout()
+        self._lbl = QLabel(label.upper())
+        self._lbl.setStyleSheet(f"color:{TEXT_SEC}; font-size:8pt; font-family:'Courier New'; letter-spacing:1px;")
+        self._dot = QLabel("●")
+        self._dot.setStyleSheet(f"color:{RED}; font-size:9pt;")
+        self._dot.setAlignment(Qt.AlignmentFlag.AlignRight)
+        hdr.addWidget(self._lbl)
+        hdr.addStretch()
+        hdr.addWidget(self._dot)
+        self._layout.addLayout(hdr)
+
+        # Value
+        self._val = QLabel(value)
+        self._val.setStyleSheet(f"color:{color}; font-size:20pt; font-weight:700; font-family:'Courier New';")
+        self._val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._val)
+
+        # Unit
+        self._unit_lbl = QLabel(unit)
+        self._unit_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:8pt; font-family:'Courier New';")
+        self._unit_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._unit_lbl)
+
+        self.setStyleSheet(f"""
+            SensorBlock {{
+                background:{BG3};
+                border:1px solid {BORDER};
+                border-radius:8px;
+            }}
+        """)
+
+    def set_value(self, val, online=True):
+        self._online = online
+        self._val.setText(str(val))
+        self._dot.setStyleSheet(f"color:{'#00ff88' if online else '#ff3355'}; font-size:9pt;")
+
+    def set_alert(self, alert=False):
+        border = RED if alert else BORDER
+        self.setStyleSheet(f"""
+            SensorBlock {{
+                background:{BG3};
+                border:1px solid {border};
+                border-radius:8px;
+            }}
+        """)
+
+
+
+
+class DashboardTab(QWidget):
+    command_sent = pyqtSignal(str, int)   # forwarded from RoverCADWidget
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._last_cmd = "stop"
+        self._sim_heading = 0.0
+        self._heading_offset = 0.0  # Track heading changes from gyro
+        self._msg_lines = []        # Message log buffer
+        self._build_ui()
+
+        # Forward controller commands up to the app window
+        self._cad.command_sent.connect(self.command_sent)
+
+        # Animate compass placeholder
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._tick_anim)
+        self._anim_timer.start(100)
+
+    def _build_ui(self):
+        self.setStyleSheet(f"background:{BG0}; color:{TEXT_PRI};")
+        root = QHBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+
+        root.addLayout(self._build_left(),   3)
+        root.addLayout(self._build_center(), 10)
+        root.addLayout(self._build_right(),  3)
+
+    # ── LEFT PANEL ────────────────────────────────────────────────────────────
+
+    def _build_left(self):
+        col = QVBoxLayout()
+        col.setSpacing(6)
+
+        # Power
+        self._s_voltage = SensorBlock("Voltage", "V", "—", "#ffbb44")
+        col.addWidget(self._s_voltage)
+
+        # Gyro
+        gy = panel()
+        gl = QVBoxLayout(gy)
+        gl.setContentsMargins(10, 8, 10, 8)
+        gl.setSpacing(4)
+        hdr2 = QHBoxLayout()
+        hdr2.addWidget(section_label("Gyro / Attitude"))
+        self._gyro_dot = QLabel("●")
+        self._gyro_dot.setStyleSheet(f"color:{DIM}; font-size:8pt;")
+        hdr2.addStretch(); hdr2.addWidget(self._gyro_dot)
+        gl.addLayout(hdr2)
+        self._gyro = GyroWidget()
+        gl.addWidget(self._gyro)
+        # Roll / Pitch values
+        rp = QHBoxLayout()
+        self._roll_lbl  = QLabel("ROLL  0.0°")
+        self._pitch_lbl = QLabel("PITCH 0.0°")
+        for l in (self._roll_lbl, self._pitch_lbl):
+            l.setStyleSheet(f"color:{TEXT_SEC}; font-size:8pt; font-family:'Courier New';")
+        rp.addWidget(self._roll_lbl); rp.addStretch(); rp.addWidget(self._pitch_lbl)
+        gl.addLayout(rp)
+        col.addWidget(gy)
+
+        # Mode: The rover drive mode 
+        # mo = panel()
+        # ml = QVBoxLayout(mo)
+        # ml.setContentsMargins(10, 8, 10, 8)
+        # ml.setSpacing(6)
+        # ml.addWidget(section_label("Drive Mode"))
+        # mode_row = QHBoxLayout()
+        # mode_row.setSpacing(6)
+        # self._mode_fast = QLabel("⚡ FAST")
+        # self._mode_eco  = QLabel("🌿 ECO")
+        # self._mode_fast.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self._mode_eco .setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self._mode_fast.setStyleSheet(f"""
+        #     background:#1a1200; color:{AMBER}; border:1px solid {AMBER};
+        #     border-radius:8px; font-size:9pt; font-family:'Courier New';
+        #     padding:6px 0;
+        # """)
+        # self._mode_eco.setStyleSheet(f"""
+        #     background:{BG3}; color:{DIM}; border:1px solid {BORDER};
+        #     border-radius:8px; font-size:9pt; font-family:'Courier New';
+        #     padding:6px 0;
+        # """)
+        # mode_row.addWidget(self._mode_fast); mode_row.addWidget(self._mode_eco)
+        # ml.addLayout(mode_row)
+        # col.addWidget(mo)
+
+        # Rover CAD
+        cad = panel()
+        cadl = QVBoxLayout(cad)
+        cadl.setContentsMargins(10, 8, 10, 8)
+        cadl.setSpacing(4)
+        cadl.addWidget(section_label("Rover Telemetry"))
+        self._cad = RoverCADWidget()
+        cadl.addWidget(self._cad)
+        self._cad_status = QLabel("STANDBY — MOTORS IDLE")
+        self._cad_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cad_status.setStyleSheet(f"color:{DIM}; font-size:8pt; font-family:'Courier New';")
+        cadl.addWidget(self._cad_status)
+        col.addWidget(cad, 1)
+
+        return col
+
+    # ── CENTER PANEL ──────────────────────────────────────────────────────────
+
+    def _build_center(self):
+        col = QVBoxLayout()
+        col.setSpacing(6)
+
+        # Compass
+        cp = panel()
+        cpl = QVBoxLayout(cp)
+        cpl.setContentsMargins(10, 8, 10, 8)
+        cpl.setSpacing(4)
+        hdr = QHBoxLayout()
+        hdr.addWidget(section_label("Compass / Heading"))
+        self._compass_dot = QLabel("●")
+        self._compass_dot.setStyleSheet(f"color:{DIM}; font-size:8pt;")
+        hdr.addStretch(); hdr.addWidget(self._compass_dot)
+        cpl.addLayout(hdr)
+        self._compass = CompassWidget()
+        cpl.addWidget(self._compass)
+        col.addWidget(cp, 1)
+
+        # Camera
+        cam = panel()
+        caml = QVBoxLayout(cam)
+        caml.setContentsMargins(10, 8, 10, 8)
+        caml.setSpacing(4)
+        hdr2 = QHBoxLayout()
+        hdr2.addWidget(section_label("Main Camera"))
+        self._cam_dot = QLabel("●")
+        self._cam_dot.setStyleSheet(f"color:{DIM}; font-size:8pt;")
+        hdr2.addStretch(); hdr2.addWidget(self._cam_dot)
+        caml.addLayout(hdr2)
+
+        cam_view = QFrame()
+        cam_view.setStyleSheet(f"""
+            QFrame {{
+                background: {BG1};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+            }}
+        """)
+        cam_view.setMinimumHeight(160)
+        cam_inner = QVBoxLayout(cam_view)
+        no_signal = QLabel("[ NO SIGNAL ]")
+        no_signal.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        no_signal.setStyleSheet(f"""
+            color:{DIM}; font-size:11pt; font-family:'Courier New';
+            letter-spacing:4px;
+        """)
+        scan_lbl = QLabel("CAMERA MODULE — PENDING")
+        scan_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scan_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:8pt; font-family:'Courier New';")
+        cam_inner.addStretch()
+        cam_inner.addWidget(no_signal)
+        cam_inner.addWidget(scan_lbl)
+        cam_inner.addStretch()
+        caml.addWidget(cam_view)
+        col.addWidget(cam, 3)
+
+        # Radar
+        rd = panel()
+        rdl = QVBoxLayout(rd)
+        rdl.setContentsMargins(10, 8, 10, 8)
+        rdl.setSpacing(4)
+        hdr3 = QHBoxLayout()
+        hdr3.addWidget(section_label("Radar — Ultrasonic"))
+        self._radar_dot = QLabel("●")
+        self._radar_dot.setStyleSheet(f"color:{DIM}; font-size:8pt;")
+        hdr3.addStretch(); hdr3.addWidget(self._radar_dot)
+        rdl.addLayout(hdr3)
+        self._radar = RadarWidget()
+        rdl.addWidget(self._radar)
+        col.addWidget(rd, 2)
+
+        return col
+
+    # ── RIGHT PANEL ───────────────────────────────────────────────────────────
+
+    def _build_right(self):
+        col = QVBoxLayout()
+        col.setSpacing(6)
+
+        # Sensor blocks
+        self._s_temp  = SensorBlock("Temperature", "°C",  "—", "#ff6655")
+        self._s_hum   = SensorBlock("Humidity",    "%",   "—", "#44aaff")
+        self._s_rad   = SensorBlock("Atmosphere",   "μSv", "—", "#bb44ff")
+        self._s_aqi   = SensorBlock("Air Quality", "AQI", "—", "#44ff99")
+
+        for s in (self._s_temp, self._s_hum, self._s_rad, self._s_aqi):
+            col.addWidget(s, 1)
+
+        col.addStretch()
+
+        # Status messages
+        msg = panel()
+        ml = QVBoxLayout(msg)
+        ml.setContentsMargins(10, 8, 10, 8)
+        ml.setSpacing(4)
+        ml.addWidget(section_label("System Messages"))
+
+        self._msg_lines = []
+        self._msg_label = QLabel("[ SYSTEM BOOT OK ]\n[ WAITING FOR ROVER ]")
+        self._msg_label.setStyleSheet(f"""
+            color:{GREEN}; font-size:8pt; font-family:'Courier New';
+            background:{BG1}; border:1px solid {BORDER};
+            border-radius:6px; padding:6px;
+        """)
+        self._msg_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._msg_label.setMinimumHeight(80)
+        ml.addWidget(self._msg_label)
+        col.addWidget(msg, 1)
+
+        return col
+
+    # ── update ────────────────────────────────────────────────────────────────
+
+    def update_data(self, payload: dict):
+        temp     = payload.get("temperature", None)
+        hum      = payload.get("humidity",    None)
+        ok       = payload.get("sensor_ok",   False)
+        voltage  = payload.get("voltage",     None)
+        current  = payload.get("current",     None)
+        power    = payload.get("power",       None)
+        ina_ok   = payload.get("ina_ok",      False)
+        cmd      = payload.get("cmd",         "stop")
+        uptime   = payload.get("uptime",      0)
+        speed    = payload.get("speed",       0)
+
+        # ── Voltage display (INA219) ──────────────────────────────────────────
+        if ina_ok and voltage is not None:
+            self._s_voltage.set_value(f"{voltage:.2f}", online=True)
+            # Alert if voltage is too low
+            self._s_voltage.set_alert(voltage < 10.5)
+        else:
+            self._s_voltage.set_value("—", online=False)
+
+        # ── Temperature & Humidity (DHT11) ────────────────────────────────────
+        if temp is not None:
+            self._s_temp.set_value(f"{temp:.1f}", online=ok)
+            self._s_temp.set_alert(temp > 40 or temp < 5)
+        else:
+            self._s_temp.set_value("—", online=False)
+            
+        if hum is not None:
+            self._s_hum.set_value(f"{hum:.1f}", online=ok)
+        else:
+            self._s_hum.set_value("—", online=False)
+
+        # Placeholders stay offline
+        self._s_rad.set_value("—", online=False)
+        self._s_aqi.set_value("—", online=False)
+
+        # Rover CAD + controller reply
+        self._cad.set_command(cmd)
+        self._cad.on_rover_status(payload)
+        self._last_cmd = cmd
+        status_txt = {
+            "forward":  "MOVING FORWARD",
+            "backward": "MOVING BACKWARD",
+            "left":     "TURNING LEFT",
+            "right":    "TURNING RIGHT",
+            "stop":     "STANDBY — MOTORS IDLE",
+        }.get(cmd, cmd.upper())
+        color = GREEN if cmd != "stop" else DIM
+        self._cad_status.setText(status_txt)
+        self._cad_status.setStyleSheet(
+            f"color:{color}; font-size:8pt; font-family:'Courier New';")
+
+        # System message
+        temp_str = f"{temp:.1f}°C" if temp is not None else "—"
+        hum_str  = f"{hum:.1f}%" if hum is not None else "—"
+        volt_str = f"{voltage:.2f}V" if voltage is not None else "—"
+        self._log_msg(f"[ T+{uptime:05d}s ]  CMD={cmd.upper():8s}  "
+                      f"SPD={speed:3d}  "
+                      f"V={volt_str}  T={temp_str}  H={hum_str}")
+
+    def _log_msg(self, text):
+        self._msg_lines.append(text)
+        if len(self._msg_lines) > 5:
+            self._msg_lines.pop(0)
+        self._msg_label.setText("\n".join(self._msg_lines))
+
+    def on_rover_status(self, payload: dict):
+        """Proxy — lets merge_monitor wire a single target for rover status."""
+        self.update_data(payload)
+
+    def on_connection_changed(self, connected: bool):
+        """Proxy — forwards connection state to the embedded controller."""
+        self._cad.on_connection_changed(connected)
+
+    def _tick_anim(self):
+        # Only update compass with simulated data if IMU is offline
+        # When IMU is online, heading is updated directly from gyro integration
+        pass

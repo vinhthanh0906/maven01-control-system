@@ -28,6 +28,8 @@ class UdpClient(QObject):
                  esp32_port: int = 4210,
                  listen_port: int = 4211,
                  parent=None):
+        
+        #This is the port connection 
         super().__init__(parent)
         self._esp_ip      = esp32_ip
         self._esp_port    = esp32_port
@@ -35,13 +37,16 @@ class UdpClient(QObject):
         self._connected   = False
         self._running     = False
 
+        #Socket and cmd gap 
         self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._send_sock.settimeout(0.05)
 
+        #Receive command gaps
         self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._recv_sock.settimeout(0.5)
 
+        #Thread split for 
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
 
     # ── public API ────────────────────────────────────────────────────────────
@@ -56,12 +61,14 @@ class UdpClient(QObject):
         except OSError as e:
             print(f"[UDP] Failed to bind port {self._listen_port}: {e}")
 
+    # Socket close when the stop command received
     def stop(self):
         self._running = False
         self._recv_sock.close()
         self._send_sock.close()
 
-    def send_command(self, direction: str, speed: int = 150):
+    # Socket the command 
+    def send_command(self, direction: str, speed: int = 100):
         """Send a motor command to the ESP32."""
         payload = json.dumps({"cmd": direction, "speed": speed}).encode()
         try:
@@ -70,6 +77,7 @@ class UdpClient(QObject):
         except Exception as e:
             print(f"[UDP] Send error: {e}")
 
+    #Update to ip of esp
     def update_esp_ip(self, ip: str):
         """Change target IP at runtime (from settings dialog)."""
         self._esp_ip = ip
@@ -81,15 +89,21 @@ class UdpClient(QObject):
         """Background thread loop - parse incoming control status and sensor data."""
         while self._running:
             try:
-                data, addr = self._recv_sock.recvfrom(256)
+                data, addr = self._recv_sock.recvfrom(512)
                 payload = json.loads(data.decode())
-                print(f"[UDP RX] ← {addr[0]}  status: {payload.get('status')} cmd: {payload.get('cmd')}")
+                print(f"[UDP RX] ← {addr[0]}  raw: {payload}")
 
                 if not self._connected:
                     self._connected = True
                     self.connection_changed.emit(True)
 
-                # Emit control fields + DHT11 sensor data
+                # Emit control fields + DHT11 sensor data + INA219 power data
+                # NOTE: "power" may be present but explicitly null (e.g. when
+                # the INA219 hasn't been read yet / ina_ok is false), so
+                # `payload.get("power", {})` is NOT enough — that default only
+                # applies when the key is missing, not when it's null. Guard
+                # with `or {}` so a literal null doesn't blow up `.get()` below.
+                power_data = payload.get("power") or {}
                 control_data = {
                     "status": payload.get("status", "unknown"),
                     "cmd": payload.get("cmd", "stop"),
@@ -97,7 +111,11 @@ class UdpClient(QObject):
                     "uptime": payload.get("uptime", 0),
                     "temperature": payload.get("temperature", None),
                     "humidity": payload.get("humidity", None),
-                    "sensor_ok": payload.get("sensor_ok", False)
+                    "sensor_ok": payload.get("sensor_ok", False),
+                    "voltage": power_data.get("bus_v", None),
+                    "current": power_data.get("current_mA", None),
+                    "power": power_data.get("power_mW", None),
+                    "ina_ok": payload.get("ina_ok", False)
                 }
                 self.status_received.emit(control_data)
 
@@ -105,7 +123,12 @@ class UdpClient(QObject):
                 if self._connected:
                     self._connected = False
                     self.connection_changed.emit(False)
-            except (json.JSONDecodeError, OSError):
-                pass
-            
-            
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"[UDP] Parse/socket error: {e}")
+            except Exception as e:
+                # Catch-all so a single malformed/unexpected packet can never
+                # silently kill this background thread. Without this, one bad
+                # packet (e.g. a null where a dict was expected) stops every
+                # future update — including temperature/humidity/voltage —
+                # with no visible error.
+                print(f"[UDP] Unexpected error while handling packet: {e}")
